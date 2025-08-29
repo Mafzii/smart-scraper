@@ -3,3 +3,4 @@ uvicorn[standard]
 playwright
 httpx
 requests
+beautifulsoup4

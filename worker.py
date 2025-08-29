@@ -1,10 +1,10 @@
-
 import asyncio
 import json
 import logging
 from playwright.async_api import async_playwright
 import httpx
 import requests
+from bs4 import BeautifulSoup
 
 
 LLM_ENDPOINT = "http://ollama:11434/api/generate"  # talk to Ollama container
@@ -41,8 +41,9 @@ def query_llm(prompt: str, context: str) -> str:
         "stream": False,
         "prompt": f"You are a web extraction assistant.\n\n"
                   f"Prompt: {prompt}\n\n"
-                  f"Website content:\n{context[:5000]}\n\n"
-                  f"Return the answer in JSON with fields 'answer' and 'confidence'."
+                  f"Website content:\n{context[:10000]}\n\n"
+                  f"Return the answer in JSON with root property field 'answer'."
+                  f"Give a brief explanation for your answer."
                   f"Use only the website content to determine your answer."
     }
     resp = requests.post(LLM_ENDPOINT, json=payload)
@@ -54,7 +55,8 @@ def query_llm(prompt: str, context: str) -> str:
 
 async def run_extraction(prompt: str, url: str) -> dict:
     logging.info(f"Starting extraction for URL: {url} with prompt: {prompt}")
-    html = await fetch_page(url, render_js=True)
+    raw_html = await fetch_page(url, render_js=True)
+    html = clean_html(raw_html)
     result = query_llm(prompt, html)
 
     try:
@@ -71,3 +73,14 @@ async def run_extraction(prompt: str, url: str) -> dict:
     }
     logging.info(f"Extraction complete for {url}")
     return output
+
+def clean_html(raw_html):
+    logging.info(f"Cleaning html input for LLM")
+    soup = BeautifulSoup(raw_html, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+        tag.decompose()
+    content = []
+    for tag in soup.find_all(["h1","h2","h3","p","li","table","tr","td"]):
+        content.append(tag.get_text(" ", strip=True))
+
+    return "\n".join(content)
