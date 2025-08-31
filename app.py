@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from worker import run_extraction
+from workers.worker import run_extraction
 
 app = FastAPI()
 

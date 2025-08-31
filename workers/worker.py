@@ -63,8 +63,7 @@ async def run_extraction(prompt: str, url: str) -> dict:
         parsed = json.loads(result)
         logging.info(f"Parsed LLM result as JSON: {parsed}")
     except Exception as e:
-        logging.warning(f"Failed to parse LLM result as JSON: {e}. Using fallback.")
-        parsed = {"answer": result.strip(), "confidence": 0.5}
+        raise ValueError(f"Failed to parse LLM result: {e}")
 
     output = {
         "prompt": prompt,
