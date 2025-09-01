@@ -2,6 +2,13 @@
 
 Smart Scraper is a simple tool for extracting data from websites.
 
+## Install
+
+```
+source .venv/bin/activate &&
+pip install -r requirements.txt
+```
+
 ## Usage
 
 ```

@@ -30,13 +30,13 @@ def make_outline(soup: BeautifulSoup) -> str:
     Only grabs some headings, div ids/classes, and table hints.
     """
     outline = []
-    for tag in soup.find_all(["h1", "h2", "h3", "h4", "div", "section", "table"]):
+    for tag in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "section", "table"]):
         desc = tag.name
         if tag.get("id"):
             desc += f"#{tag.get('id')}"
         if tag.get("class"):
             desc += f".{'.'.join(tag.get('class'))}"
-        text = tag.get_text(strip=True)[:50]
+        text = tag.get_text(strip=True)
         if text:
             desc += f" → {text}"
         outline.append(desc)
@@ -47,35 +47,27 @@ def make_outline(soup: BeautifulSoup) -> str:
 
 def extract_subtree(soup: BeautifulSoup, hint: str) -> str:
     """
-    Deep search: find all tags where id/class/text matches hint, collect their text.
+    Extract subtree based on structured identifier dict from LLM.
     """
+    tag = hint.get("tag")
+    tag_id = hint.get("id")
+    tag_class = hint.get("class")
+    tag_text = hint.get("text")
+    tag_href = hint.get("href")
     matches = []
-    logging.info(f"Extracting subtree with hint: {hint[:100]}...")
-    logging.info(f"Soup length: {len(soup.prettify())}")
-
-    # Search by id
-    for tag in soup.find_all(attrs={"id": lambda v: v and hint.lower() in v.lower()}):
-        text = tag.get_text(" ", strip=True)
-        matches.append(text)
-
-    # Search by class (can be multiple classes per tag)
-    for tag in soup.find_all(class_=lambda v: v and any(hint.lower() in c.lower() for c in v)):
-        text = tag.get_text(" ", strip=True)
-        matches.append(text)
-
-    # Search by tag name
-    for tag in soup.find_all(hint.lower()):
-        text = tag.get_text(" ", strip=True)
-        matches.append(text)
-
-    # Search by text content
-    for tag in soup.find_all(string=lambda t: hint.lower() in t.lower()):
-        text = tag.parent.get_text(" ", strip=True)
-        matches.append(text)
-
-    # Remove duplicates and empty strings
+    search_kwargs = {}
+    if tag_id:
+        search_kwargs["id"] = tag_id
+    if tag_class:
+        search_kwargs["class_"] = tag_class.split() if isinstance(tag_class, str) else tag_class
+    found = soup.find_all(tag, **search_kwargs)
+    for t in found:
+        if tag_text and tag_text not in t.get_text(" ", strip=True):
+            continue
+        if tag_href and t.get("href") != tag_href:
+            continue
+        matches.append(t.get_text(" ", strip=True))
     results = [text for text in set(matches) if text]
-
     with open('logs/step2_extracted_subtree.txt', 'w') as f:
         f.write("\n---\n".join(results))
     return "\n---\n".join(results)
@@ -106,32 +98,47 @@ def agentic_scrape(prompt: str, url: str) -> dict:
     1. Ask LLM where to look.
     2. Ask LLM to extract structured JSON.
     """
-    html = asyncio.run(fetch_page(url, True))
+    page_content = asyncio.run(fetch_page(url, True))
     with open('logs/page_content.txt', 'w') as f:
-        f.write(html)
-    soup = BeautifulSoup(html, "html.parser")
-
-    # Step 0: Extract structured content for LLM
-    structured_content = extract_structured_content(soup)
-    with open('logs/page_structured_content.json', 'w') as f:
-        json.dump(structured_content, f, indent=2)
+        f.write(page_content)
+    soup = BeautifulSoup(page_content, "html.parser")
+    outline = make_outline(soup)
 
     # Step 1: Build outline & ask LLM for best section
-    outline = make_outline(soup)
     section_hint = call_llm(f"""
-    User wants: {prompt}.
-    Here is a page outline:
-    {outline}
+        USER_REQUEST: {prompt}
+        PAGE_STRUCTURE: {outline}
 
-    Which section (heading, div id, class, or table) seems most relevant?
-    Reply with a comma-separated string.
-    No extra information please.
+        TASK: From the PAGE_STRUCTURE, identify only the sections, elements, or text that are most relevant to fulfilling the USER_REQUEST. 
+        - Ignore navigation menus, ads, boilerplate text, and unrelated content.
+        - Preserve concise, context-rich snippets (e.g. headings, table rows, labeled divs).
+        - Keep order if it helps understanding.
+
+        REPLY STRICTLY with a list of JSON objects, each with keys:
+        "tag": the tag name (e.g. "h2", "div", "table", "tr", "td", "a"),
+        "id": the id attribute if present, else null,
+        "class": the class attribute if present, else null,
+        "text": the text content (short, max 100 chars),
+        "href": the href attribute if present, else null.
+        Example:
+        "tag": "h2", "id": "schedule", "class": "main-title", "text": "NBA Schedule", "href": null
+        "tag": "a", "id": null, "class": "link", "text": "Thunder vs Lakers", "href": "/nba/game/123"
+        DO NOT explain or add extra text.
     """)
     with open('logs/step1_llm_section_hint.txt', 'w') as f:
         f.write(section_hint)
 
-    # Step 2: Extract candidate snippets for each identifier
-    identifiers = [i.strip() for i in section_hint.replace(',', '\n').split('\n') if i.strip()]
+    # Step 2: Extract identifiers from JSON array in section_hint
+    identifiers = []
+    try:
+        # Find the first JSON array in the string
+        start = section_hint.find('[')
+        end = section_hint.rfind(']') + 1
+        if start != -1 and end != -1:
+            json_str = section_hint[start:end]
+            identifiers = json.loads(json_str)
+    except Exception as e:
+        raise Exception(f"Failed to parse identifiers JSON: {e}")
     logging.info(f"Identifiers from LLM: {identifiers}")
     candidates = []
     for ident in identifiers:
@@ -143,16 +150,15 @@ def agentic_scrape(prompt: str, url: str) -> dict:
 
     # Step 3: Ask LLM to extract JSON from combined candidate text and structured content
     structured = call_llm(f"""
-    Task: {prompt}.
-    Here is the candidate text:
-    {combined_candidate}
+        You are a web extraction assistant.\n\n
+        USER_INPUT: {prompt}.
+        CONTEXT: {combined_candidate}
 
-    Here is the page structured content (list of dicts with id, href, text):
-    {json.dumps(structured_content, ensure_ascii=False)}
-
-    Extract according to the task, no explanation.
+        TASK: Complete the user input to the best of your ability using the context.
+        Respond in JSON format with the answer in the output property 
+        and the user input in the input property.
     """)
-    with open('logs/step3_llm_structured_response.txt', 'w') as f:
+    with open('logs/step3_llm_structured_response.json', 'w') as f:
         f.write(structured)
 
     try:

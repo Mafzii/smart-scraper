@@ -4,3 +4,4 @@ playwright
 httpx
 requests
 beautifulsoup4
+matplotlib
