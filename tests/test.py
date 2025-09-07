@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -12,3 +13,5 @@ def extract_from_url(url):
 url = 'https://www.espn.com/nba/schedule'
 html = asyncio.run(extract_from_url(url))
 print(f"Fetched from {url}")
+with open("logs/output.json", "w") as f:
+    json.dump(html, f)
