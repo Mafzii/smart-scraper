@@ -1,6 +1,6 @@
-# Smart Scraper
+# Not-so-smart Scraper
 
-Smart Scraper is a simple tool for extracting data from websites.
+A simple project for extracting data from websites using SLMs.
 
 ## Install
 
@@ -8,6 +8,11 @@ Smart Scraper is a simple tool for extracting data from websites.
 source .venv/bin/activate &&
 pip install -r requirements.txt
 ```
+
+## Docker Compose
+- Spin up docker using `docker compose up`.
+- This will create an ollama instance that will be used for the SLM.
+- It will also create a FASTAPI endpoint `extract` that can be hit via the curl command below
 
 ## Usage
 
